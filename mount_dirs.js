@@ -21,17 +21,22 @@ const readPassword = () => {
 }
 
 const checkExistsOrMake = (dir) => {
-  console.log('Checking dir exists', dir);
   return new Promise((res, rej) => {
     fs.stat(dir, (err, stats) => {
-      if (err) return rej(err);
-      else if (stats.isFile()) return rej(`${dir} is a file`)
-      res();
+      if (err) rej(err);
+      else if (!stats.isDirectory()) rej(`${dir} is not a directory`)
+      else res();
     })
   })
 }
 const checkDirEmpty = (dir) => {
-  return Promise.resolve();
+  return new Promise((res, rej) => {
+    fs.readdir(dir, (err, files) => {
+      if (err) rej(err);
+      else if (files.length !== 0) rej();
+      else res();
+    })
+  })
 }
 
 const mountWithOptions = ({ user, server, password }) => (path, destination) => {
@@ -40,9 +45,9 @@ const mountWithOptions = ({ user, server, password }) => (path, destination) => 
     const localDir = `${HOME}/${destination}`;
     console.log('mounting', remoteDir, 'to', localDir);
     const mountProcess = spawn('mount_smbfs', [remoteDir, localDir])
-    return checkExistsOrMake(localDir)
+    checkExistsOrMake(localDir)
       .then(() => {
-        return checkDirEmpty(localDir)
+        checkDirEmpty(localDir)
           .then(() => {
             mountProcess.on('close', (code) => {
               if (code !== 0) rej(code)
@@ -55,8 +60,9 @@ const mountWithOptions = ({ user, server, password }) => (path, destination) => 
               console.log(`${data}`);
             });
           })
-          .catch(() => rej(`Cannot mount to ${destination} as directory not empty`));
-      });
+          .catch(() => rej(`ERROR: Directory '${destination}' is not empty`));
+      })
+      .catch(rej);
   });
 }
 
@@ -69,7 +75,7 @@ const mountMappingsFromFile = (file) => {
       const doMount = mountWithOptions({ password, user, server });
       return (() => {
         const mountCommands = Object.keys(mappings.paths).map(p => doMount(removeLeading(p), removeLeading(mappings.paths[p])));
-        return Promise.all(mountCommands).catch(() => null);
+        return Promise.all(mountCommands);
       });
     });
 }
@@ -78,18 +84,16 @@ const checkConfigFile = (config_file) => {
   return new Promise((res, rej) => {
     fs.access(config_file, fs.constants.R_OK, (err) => {
       if (err) rej(err)
-      res(mountMappingsFromFile(config_file))
+      res(mountMappingsFromFile(config_file));
     })
   });
 }
 
 const logErrorAndExit = (err) => {
   console.error(err);
-  process.exit(1);
 }
 
-checkConfigFile(config_file)
+const p = checkConfigFile(config_file)
   .then(func => func())
-  .then(logErrorAndExit)
-  .then(() => console.log('Done'))
   .catch(logErrorAndExit);
+
